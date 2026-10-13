@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Comprobante</title>
+<!--
+  EL COMPROBANTE DIGITAL, del lado del cliente.
+
+  Esta página es UNA sola para todas las tiendas y vive en GitHub Pages (gratis,
+  en el repositorio público de las versiones). No guarda nada ni pregunta nada a
+  ningún servidor: los datos de la compra vienen DENTRO del enlace, después del
+  "#", comprimidos. Lo que va después del "#" ni siquiera le llega a GitHub: lo
+  lee solo el teléfono del cliente.
+
+  Se arma desde servidor/comprobante.js (enlaceDelComprobante) y se publica con
+  servidor/publicar.js. El original está en servidor/comprobante-web/.
+-->
+<style>
+  :root { --marca: #2E8B6E; --tinta: #1d1d1f; --suave: #6b6b70; --linea: #e6e6ea; --fondo: #f2f2f4; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--tinta); }
+  main { max-width: 440px; margin: 0 auto; padding: 16px 16px 40px; }
+  .recibo { background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 6px 24px -10px rgba(0,0,0,.25); }
+  .cabeza { background: var(--marca); color: #fff; padding: 20px 20px 16px; }
+  .cabeza h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+  .cabeza p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+  .cuerpo { padding: 14px 20px 18px; }
+  .item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+  .item b { font-weight: 600; font-size: 14px; display: block; }
+  .item small { color: var(--suave); font-size: 12.5px; }
+  .item .monto { white-space: nowrap; font-weight: 600; font-size: 14px; }
+  .mas { color: var(--suave); font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
+  .fila { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding: 3px 0; }
+  .fila span:first-child { color: var(--suave); }
+  .total { margin-top: 12px; padding-top: 10px; border-top: 2px solid var(--tinta); }
+  .total .bs { font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+  .total .usd { color: var(--suave); font-size: 15px; }
+  .bloque { margin-top: 14px; }
+  .bloque h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--suave); margin: 0 0 4px; }
+  .anulada { margin-top: 12px; padding: 8px; text-align: center; font-weight: 800; color: #b23b33; border: 2px solid #b23b33; border-radius: 8px; }
+  .pie { text-align: center; padding: 14px 20px 18px; border-top: 1px dashed var(--linea); }
+  .pie b { display: block; font-size: 15px; }
+  .pie small { color: var(--suave); font-size: 11.5px; display: block; margin-top: 6px; }
+  .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .botones button { font: inherit; font-weight: 600; font-size: 15px; padding: 13px 10px; border-radius: 10px; border: 0; cursor: pointer; }
+  .prim { background: var(--marca); color: #fff; }
+  .sec { background: #fff; color: var(--tinta); border: 1px solid var(--linea) !important; }
+  .error { background: #fff; border-radius: 14px; padding: 24px; text-align: center; color: var(--suave); }
+  .error b { display: block; color: var(--tinta); font-size: 17px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<main id="raiz"><div class="error"><b>Abriendo el comprobante…</b></div></main>
+<script>
+"use strict";
+const raiz = document.getElementById("raiz");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = (n) => Number(n).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const USD = (n) => "$" + num(n);
+const BS = (n) => "Bs " + num(n);
+
+function fecha(iso) {
+  try {
+    return new Date(iso).toLocaleString("es-VE", { day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch (e) { return iso; }
+}
+
+async function leer() {
+  const dato = location.hash.slice(1);
+  if (!dato) throw new Error("Este enlace no trae ningún comprobante.");
+  const b64 = dato.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = Uint8Array.from(atob(b64 + "===".slice((b64.length + 3) % 4)), (c) => c.charCodeAt(0));
+  if (typeof DecompressionStream !== "function") throw new Error("Este navegador es muy viejo para abrir el comprobante. Actualízalo o usa Chrome.");
+  const flujo = new Blob([bin]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return JSON.parse(await new Response(flujo).text());
+}
+
+function pintar(c) {
+  if (/^#[0-9a-f]{6}$/i.test(c.c || "")) document.documentElement.style.setProperty("--marca", c.c);
+  document.title = "Comprobante #" + c.n + " · " + c.t;
+  const items = (c.i || []).map((it) => `<div class="item">
+      <span><b>${esc(it[0])}</b><small>${esc(it[1])} × ${USD(it[2])}${it[4] ? " · " + esc(it[4]) : ""}</small></span>
+      <span class="monto">${USD(it[3])}</span></div>`).join("");
+  const mas = c.m ? `<div class="mas">y ${c.m} producto${c.m === 1 ? "" : "s"} más</div>` : "";
+  const filas = (lista) => lista.map((f) => `<div class="fila"><span>${esc(f[0])}</span><span>${esc(f[1])}</span></div>`).join("");
+  const extras = [];
+  if (c.d > 0) extras.push(["Ahorro", "−" + USD(c.d)]);
+  if (c.e > 0) extras.push(["Envases", USD(c.e)]);
+  const otros = [];
+  if (c.vu) otros.push(["Vuelto", c.vu]);
+  if (c.fi) otros.push(["Fiado a", c.fi]);
+  if (c.cj) otros.push(["Caja", c.cj]);
+  if (c.fa) otros.push(["Factura", c.fa]);
+  (c.dv || []).forEach((d) => otros.push(["Devuelto " + d[0], "−" + USD(d[1])]));
+  raiz.innerHTML = `<div class="recibo" id="recibo">
+      <div class="cabeza"><h1>${esc(c.t)}</h1><p>Comprobante digital #${esc(c.n)} · ${esc(fecha(c.f))}</p></div>
+      <div class="cuerpo">
+        ${items}${mas}
+        ${extras.length ? `<div style="margin-top:8px">${filas(extras)}</div>` : ""}
+        <div class="total"><div class="bs">${BS(c.T * c.x)}</div><div class="usd">${USD(c.T)} · tasa ${num(c.x)} Bs/$</div></div>
+        ${c.p && c.p.length ? `<div class="bloque"><h2>Cómo pagó</h2>${filas(c.p)}</div>` : ""}
+        ${otros.length ? `<div class="bloque">${filas(otros)}</div>` : ""}
+        ${c.a ? '<div class="anulada">VENTA ANULADA</div>' : ""}
+      </div>
+      <div class="pie"><b>¡Gracias por su compra!</b><small>Comprobante de entrega. No es una factura fiscal.</small></div>
+    </div>
+    <div class="botones">
+      <button class="prim" id="guardar">Guardar como imagen</button>
+      <button class="sec" id="compartir">Compartir</button>
+    </div>`;
+  document.getElementById("guardar").onclick = () => imagen(c).then((b) => bajar(b, c)).catch(fallo);
+  document.getElementById("compartir").onclick = () => imagen(c).then((b) => compartir(b, c)).catch(fallo);
+}
+
+/*
+ * La imagen se DIBUJA aquí (canvas), sin librerías: el recibo es simple y así
+ * la página no depende de nada más.
+ */
+function imagen(c) {
+  const ancho = 720, m = 44, esc2 = 2;
+  const lineas = [];
+  const pon = (t, o) => lineas.push(Object.assign({ t: String(t) }, o || {}));
+  (c.i || []).forEach((it) => { pon(it[0], { b: 1, der: USD(it[3]) }); pon(it[1] + " × " + USD(it[2]) + (it[4] ? " · " + it[4] : ""), { s: 1 }); });
+  if (c.m) pon("y " + c.m + " productos más", { s: 1 });
+  if (c.d > 0) pon("Ahorro", { der: "−" + USD(c.d) });
+  if (c.e > 0) pon("Envases", { der: USD(c.e) });
+  pon("", { raya: 1 });
+  pon(BS(c.T * c.x), { grande: 1 });
+  pon(USD(c.T) + " · tasa " + num(c.x) + " Bs/$", { s: 1 });
+  (c.p || []).forEach((p) => pon(p[0], { der: p[1] }));
+  if (c.vu) pon("Vuelto", { der: c.vu });
+  if (c.fi) pon("Fiado a", { der: c.fi });
+  if (c.a) pon("VENTA ANULADA", { b: 1 });
+  const altoLinea = (l) => (l.grande ? 64 : l.raya ? 24 : l.s ? 34 : 40);
+  const cabeza = 140, pie = 120;
+  const alto = cabeza + 30 + lineas.reduce((s, l) => s + altoLinea(l), 0) + pie;
+  const cv = document.createElement("canvas");
+  cv.width = ancho * esc2; cv.height = alto * esc2;
+  const g = cv.getContext("2d");
+  g.scale(esc2, esc2);
+  const marca = getComputedStyle(document.documentElement).getPropertyValue("--marca").trim() || "#2E8B6E";
+  const fuente = (peso, tam) => `${peso} ${tam}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, ancho, alto);
+  g.fillStyle = marca; g.fillRect(0, 0, ancho, cabeza);
+  g.fillStyle = "#ffffff"; g.font = fuente(800, 36); g.fillText(c.t, m, 66, ancho - m * 2);
+  g.font = fuente(400, 22); g.fillText("Comprobante digital #" + c.n + " · " + fecha(c.f), m, 106, ancho - m * 2);
+  let y = cabeza + 30;
+  for (const l of lineas) {
+    const h = altoLinea(l);
+    if (l.raya) { g.fillStyle = "#1d1d1f"; g.fillRect(m, y + 8, ancho - m * 2, 3); y += h; continue; }
+    g.fillStyle = l.s ? "#6b6b70" : "#1d1d1f";
+    g.font = fuente(l.grande ? 800 : l.b ? 600 : 400, l.grande ? 46 : l.s ? 21 : 25);
+    g.fillText(l.t, m, y + h - 14, l.der ? ancho - m * 2 - 200 : ancho - m * 2);
+    if (l.der) { g.textAlign = "right"; g.font = fuente(600, 25); g.fillText(l.der, ancho - m, y + h - 14); g.textAlign = "left"; }
+    y += h;
+  }
+  g.strokeStyle = "#d0d0d6"; g.setLineDash([8, 8]); g.beginPath(); g.moveTo(m, y + 20); g.lineTo(ancho - m, y + 20); g.stroke(); g.setLineDash([]);
+  g.textAlign = "center"; g.fillStyle = "#1d1d1f"; g.font = fuente(700, 26); g.fillText("¡Gracias por su compra!", ancho / 2, y + 64);
+  g.fillStyle = "#6b6b70"; g.font = fuente(400, 18); g.fillText("Comprobante de entrega. No es una factura fiscal.", ancho / 2, y + 96);
+  return new Promise((ok, mal) => cv.toBlob((b) => (b ? ok(b) : mal(new Error("No se pudo armar la imagen."))), "image/png"));
+}
+
+const nombreArchivo = (c) => "comprobante-" + c.n + ".png";
+
+function bajar(blob, c) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nombreArchivo(c);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+async function compartir(blob, c) {
+  const archivo = new File([blob], nombreArchivo(c), { type: "image/png" });
+  if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+    try { await navigator.share({ files: [archivo], title: "Comprobante #" + c.n }); } catch (e) { /* lo cerró */ }
+  } else {
+    bajar(blob, c);
+  }
+}
+
+function fallo(e) { alert(e.message || String(e)); }
+
+leer().then(pintar).catch((e) => {
+  raiz.innerHTML = `<div class="error"><b>No se pudo abrir el comprobante</b>${esc(e.message)}</div>`;
+});
+</script>
+</body>
+</html>
