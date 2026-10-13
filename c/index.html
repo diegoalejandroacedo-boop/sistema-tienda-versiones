@@ -26,6 +26,7 @@
   .cabeza { background: var(--marca); color: #fff; padding: 20px 20px 16px; }
   .cabeza h1 { margin: 0; font-size: 20px; line-height: 1.2; }
   .cabeza p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+  .cabeza .datos { margin-top: 2px; font-size: 12.5px; opacity: .92; }
   .cuerpo { padding: 14px 20px 18px; }
   .item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--linea); }
   .item b { font-weight: 600; font-size: 14px; display: block; }
@@ -53,6 +54,7 @@
 </head>
 <body>
 <main id="raiz"><div class="error"><b>Abriendo el comprobante…</b></div></main>
+<script src="imagen.js"></script>
 <script>
 "use strict";
 const raiz = document.getElementById("raiz");
@@ -95,16 +97,16 @@ function pintar(c) {
   if (c.fa) otros.push(["Factura", c.fa]);
   (c.dv || []).forEach((d) => otros.push(["Devuelto " + d[0], "−" + USD(d[1])]));
   raiz.innerHTML = `<div class="recibo" id="recibo">
-      <div class="cabeza"><h1>${esc(c.t)}</h1><p>Comprobante digital #${esc(c.n)} · ${esc(fecha(c.f))}</p></div>
+      <div class="cabeza"><h1>${esc(c.t)}</h1>${(c.h || []).map((x) => `<p class="datos">${esc(x)}</p>`).join("")}<p>Comprobante digital #${esc(c.n)} · ${esc(fecha(c.f))}</p></div>
       <div class="cuerpo">
         ${items}${mas}
         ${extras.length ? `<div style="margin-top:8px">${filas(extras)}</div>` : ""}
-        <div class="total"><div class="bs">${BS(c.T * c.x)}</div><div class="usd">${USD(c.T)} · tasa ${num(c.x)} Bs/$</div></div>
+        <div class="total"><div class="bs">${BS(c.T * c.x)}</div><div class="usd">${USD(c.T)}${c.st ? "" : " · tasa " + num(c.x) + " Bs/$"}</div></div>
         ${c.p && c.p.length ? `<div class="bloque"><h2>Cómo pagó</h2>${filas(c.p)}</div>` : ""}
         ${otros.length ? `<div class="bloque">${filas(otros)}</div>` : ""}
         ${c.a ? '<div class="anulada">VENTA ANULADA</div>' : ""}
       </div>
-      <div class="pie"><b>¡Gracias por su compra!</b><small>Comprobante de entrega. No es una factura fiscal.</small></div>
+      <div class="pie"><b>${esc(c.g || "¡Gracias por su compra!")}</b><small>Comprobante de entrega. No es una factura fiscal.</small></div>
     </div>
     <div class="botones">
       <button class="prim" id="guardar">Guardar como imagen</button>
@@ -115,52 +117,10 @@ function pintar(c) {
 }
 
 /*
- * La imagen se DIBUJA aquí (canvas), sin librerías: el recibo es simple y así
- * la página no depende de nada más.
+ * La imagen la dibuja imagen.js: el MISMO archivo que usa el programa
+ * (frontend/js/comprobante-imagen.js), así sale igual de los dos lados.
  */
-function imagen(c) {
-  const ancho = 720, m = 44, esc2 = 2;
-  const lineas = [];
-  const pon = (t, o) => lineas.push(Object.assign({ t: String(t) }, o || {}));
-  (c.i || []).forEach((it) => { pon(it[0], { b: 1, der: USD(it[3]) }); pon(it[1] + " × " + USD(it[2]) + (it[4] ? " · " + it[4] : ""), { s: 1 }); });
-  if (c.m) pon("y " + c.m + " productos más", { s: 1 });
-  if (c.d > 0) pon("Ahorro", { der: "−" + USD(c.d) });
-  if (c.e > 0) pon("Envases", { der: USD(c.e) });
-  pon("", { raya: 1 });
-  pon(BS(c.T * c.x), { grande: 1 });
-  pon(USD(c.T) + " · tasa " + num(c.x) + " Bs/$", { s: 1 });
-  (c.p || []).forEach((p) => pon(p[0], { der: p[1] }));
-  if (c.vu) pon("Vuelto", { der: c.vu });
-  if (c.fi) pon("Fiado a", { der: c.fi });
-  if (c.a) pon("VENTA ANULADA", { b: 1 });
-  const altoLinea = (l) => (l.grande ? 64 : l.raya ? 24 : l.s ? 34 : 40);
-  const cabeza = 140, pie = 120;
-  const alto = cabeza + 30 + lineas.reduce((s, l) => s + altoLinea(l), 0) + pie;
-  const cv = document.createElement("canvas");
-  cv.width = ancho * esc2; cv.height = alto * esc2;
-  const g = cv.getContext("2d");
-  g.scale(esc2, esc2);
-  const marca = getComputedStyle(document.documentElement).getPropertyValue("--marca").trim() || "#2E8B6E";
-  const fuente = (peso, tam) => `${peso} ${tam}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-  g.fillStyle = "#ffffff"; g.fillRect(0, 0, ancho, alto);
-  g.fillStyle = marca; g.fillRect(0, 0, ancho, cabeza);
-  g.fillStyle = "#ffffff"; g.font = fuente(800, 36); g.fillText(c.t, m, 66, ancho - m * 2);
-  g.font = fuente(400, 22); g.fillText("Comprobante digital #" + c.n + " · " + fecha(c.f), m, 106, ancho - m * 2);
-  let y = cabeza + 30;
-  for (const l of lineas) {
-    const h = altoLinea(l);
-    if (l.raya) { g.fillStyle = "#1d1d1f"; g.fillRect(m, y + 8, ancho - m * 2, 3); y += h; continue; }
-    g.fillStyle = l.s ? "#6b6b70" : "#1d1d1f";
-    g.font = fuente(l.grande ? 800 : l.b ? 600 : 400, l.grande ? 46 : l.s ? 21 : 25);
-    g.fillText(l.t, m, y + h - 14, l.der ? ancho - m * 2 - 200 : ancho - m * 2);
-    if (l.der) { g.textAlign = "right"; g.font = fuente(600, 25); g.fillText(l.der, ancho - m, y + h - 14); g.textAlign = "left"; }
-    y += h;
-  }
-  g.strokeStyle = "#d0d0d6"; g.setLineDash([8, 8]); g.beginPath(); g.moveTo(m, y + 20); g.lineTo(ancho - m, y + 20); g.stroke(); g.setLineDash([]);
-  g.textAlign = "center"; g.fillStyle = "#1d1d1f"; g.font = fuente(700, 26); g.fillText("¡Gracias por su compra!", ancho / 2, y + 64);
-  g.fillStyle = "#6b6b70"; g.font = fuente(400, 18); g.fillText("Comprobante de entrega. No es una factura fiscal.", ancho / 2, y + 96);
-  return new Promise((ok, mal) => cv.toBlob((b) => (b ? ok(b) : mal(new Error("No se pudo armar la imagen."))), "image/png"));
-}
+const imagen = (c) => window.dibujarComprobante(c);
 
 const nombreArchivo = (c) => "comprobante-" + c.n + ".png";
 
